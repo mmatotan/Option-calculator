@@ -2,7 +2,7 @@ from alpha_vantage.timeseries import TimeSeries
 import numpy as np
 # Aplha Vantaga key: OW2YG7NAMNK8U8CZ
 
-size = 90 #Equal to minutes
+size = 10 #Equal to minutes
 granularity = 12
 
 ts = TimeSeries(key='OW2YG7NAMNK8U8CZ', output_format='pandas')
@@ -16,7 +16,7 @@ close_price = data[0]['4. close']
 
 f = open('intraday_data.txt', 'w')
 
-for i in range(size - 1):
+for i in range(size):
     minute = np.linspace(close_price[-(size - i)], close_price[-(size - i) + 1], granularity)
     for j in range(granularity):
         f.write(str(round(minute[j], 2)))

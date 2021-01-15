@@ -42,7 +42,7 @@ int enqueue(Node **head, Node **tail, float val) {
 }
 
 //Not used
-/* int print(Node *head) {
+int print(Node *head) {
     Node *trenutni;
 
     if(!head) return -1;
@@ -53,6 +53,6 @@ int enqueue(Node **head, Node **tail, float val) {
     printf("\n");
 
     return 0;
-} */
+}
 
 #endif
