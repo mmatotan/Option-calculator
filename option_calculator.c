@@ -50,7 +50,7 @@ void *thread_calculate_single_option(void *args){
 void *thread_calculate_options(void *args){
     //Fetch needed variables and free args
     float *variables = (float*) args;
-
+    
     float stock_price = variables[0], volatility = variables[1], risk_free_rate = variables[2], strike_price, time = variables[4];
     float *data_to_send;
 
@@ -80,6 +80,7 @@ void *thread_calculate_options(void *args){
 
         pthread_create(&threads[i], NULL, thread_calculate_single_option, (void *)data_to_send); 
     }
+    
     //Join threads and get results
     for(int i = 0; i < number_of_options; i++){
         option *tmp;
@@ -118,6 +119,7 @@ Queue init(){
     FILE *fp = fopen("intraday_data.txt", "r");
     float number;
     int i = 0;
+
     while(fscanf(fp, "%f", &number) > 0 && i < number_of_entries)
     {
         enqueue(&head, &tail, number);
@@ -152,9 +154,11 @@ float calculate_volatility(Node *head){
     Node *t;
 
     if(!head) return -1;
+
     for(t = head; t != NULL; t = t -> next){
         mean += (t -> val);
     }
+
     mean /= (float) number_of_entries;
     
     for(t = head; t != NULL; t = t -> next){
@@ -174,15 +178,13 @@ int main(){
     //Loads historical data from api
     Queue nodes = init();
 
-    float current_price = 0, volatility;
-
     time_t raw_time;
     time(&raw_time);
     struct tm *time_info = localtime(&raw_time);
 
-    float risk_free_rate, divided_time;
     //Most often used option durations
     float days[3] = {90, 180, 270};
+    float risk_free_rate, divided_time, current_price = 0, volatility;
     float *variables;
 
     printf("Enter the current risk-free rate of interest:\n");
@@ -198,11 +200,12 @@ int main(){
         run_python("get_current_stock_price.py");
         current_price = get_current_price();
 
-        //LIFO - Removes the last stock price entry and places a fresh one on top
+        //FIFO - Removes the last stock price entry and places a fresh one on top
         dequeue(&nodes.head, &nodes.tail);
         enqueue(&nodes.head, &nodes.tail, current_price);
         volatility = calculate_volatility(nodes.head);
 
+        clock_t begin = clock();
         for (int i = 0; i < 3; i++)
         {
             //Allocate data to send for further processing, it will be freed when the thread is done fetching variables
@@ -211,15 +214,19 @@ int main(){
             variables[0] = current_price;
             variables[1] = volatility;
             variables[2] = risk_free_rate;
-            variables[3] = 0;
+            variables[3] = 0; //Strike price not yet determined
             divided_time = (days[i] / 365);
             variables[4] = divided_time;
 
             pthread_create(&threads[i], NULL, thread_calculate_options, (void *)variables);
         }
-        
+        clock_t end = clock();
+
+        double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+
         //To limit Api requests and match data granularity the program sleeps
         sleep(1);
+        printf("\nTimed: %f seconds", time_spent);
         printf("\nCurrent Stock Price: %f\nVolatility: %f\n", current_price, volatility);
         sleep(4);
 
