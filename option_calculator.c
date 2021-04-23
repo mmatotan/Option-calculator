@@ -7,11 +7,14 @@
 #include <unistd.h>
 #include <pthread.h>
 #include "calculations.h"
-#include "nodes.h"
 
-//Number of stock prices tracked, has to match get_intraday_data.py
-const int number_of_entries = 120;
+//Global variables which are only changed in functions get_tickers() and get_dates()
+//They are used in multiple other functions and threads
+int number_of_tickers, number_of_dates;
+char **tickers;
+float *days;
 
+//Structure for end values of an option
 typedef struct{
     float call;
     float put;
@@ -27,7 +30,7 @@ void *thread_calculate_single_option(void *args){
     
     free(args);
 
-    //Rest follows the formula for calculating options, all functions are in calculations.h
+    //The rest follows the formula for calculating options, all functions are located in calculations.h
     float d1 = calculate_d1(stock_price, strike_price, risk_free_rate, volatility, time);
     float d2 = calculate_d2(d1, volatility, time);
 
@@ -37,12 +40,12 @@ void *thread_calculate_single_option(void *args){
     option *option_price = malloc(sizeof(option));
 
     option_price->call = calculate_call_option(stock_price, risk_free_rate, time, Nd1, Nd2, strike_price);
-    //To simulate real world, options won't ever be free
-    if(option_price->call < 0.03) option_price->call = 0.03;
+    //To simulate real world, options won't ever be free for purchase, they may expire worthless though
+    if(option_price->call < 0.01) option_price->call = 0.01;
 
     option_price->put = calculate_put_option(option_price->call, strike_price, risk_free_rate, time, stock_price);
     //Same for put
-    if(option_price->put < 0.03) option_price->put = 0.03;
+    if(option_price->put < 0.01) option_price->put = 0.01;
 
     pthread_exit(option_price);
 }
@@ -51,15 +54,21 @@ void *thread_calculate_options(void *args){
     //Fetch needed variables and free args
     float *variables = (float*) args;
     
-    float stock_price = variables[0], volatility = variables[1], risk_free_rate = variables[2], strike_price, time = variables[4];
+    float stock_price = variables[0], volatility = variables[1], risk_free_rate = variables[2], strike_price, dte = variables[4];
     float *data_to_send;
+
+    int id_of_ticker = (int) variables[5];
+    time_t raw_time;
+    time(&raw_time);
+    struct tm *time_info;
 
     free(args);
     
     int lowest_strike_price, highest_strike_price;
-    //Too high/low strike prices are not necessary
-    lowest_strike_price = (int) floor(stock_price - (0.1 * stock_price));
-    highest_strike_price = (int) floor(stock_price + (0.1 * stock_price));
+    //Prepare the needed strike prices which the stock may be able to reach based on it's volatility
+    lowest_strike_price = (int) floor(stock_price - (volatility * stock_price));
+    if(lowest_strike_price < 1) lowest_strike_price = 1; //Stocks can't hit negative value
+    highest_strike_price = (int) floor(stock_price + (volatility * stock_price));
     
     int number_of_options = highest_strike_price - lowest_strike_price;
     option option_prices[number_of_options];
@@ -76,7 +85,7 @@ void *thread_calculate_options(void *args){
         data_to_send[2] = risk_free_rate;
         strike_price = (float)lowest_strike_price + i;
         data_to_send[3] = strike_price;
-        data_to_send[4] = time;
+        data_to_send[4] = dte;
 
         pthread_create(&threads[i], NULL, thread_calculate_single_option, (void *)data_to_send); 
     }
@@ -90,15 +99,22 @@ void *thread_calculate_options(void *args){
         free(tmp);
     }
 
-    //Lock mutex for output so results don't mix and output the results
+    time_info = localtime(&raw_time);
+
+    //Lock mutex for output so results don't mix and store the results in seperate .csv files
     pthread_mutex_lock(&options_mutex);
-    printf("\nFOR DURATION OF %d DAYS\n", (int)(time * 365));
+
+    char *ticker = malloc(strlen(tickers[id_of_ticker]) * sizeof(char));
+    strcpy(ticker, tickers[id_of_ticker]);
+    strcat(ticker, ".csv");
+    FILE *fp = fopen(ticker, "a");
+    free(ticker);
+    fprintf(fp, "\n%d,%d/%d/%d,%d:%d:%d\n", (int)(dte * 365), time_info->tm_mday, time_info->tm_mon + 1, time_info->tm_year + 1900, time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
     for(int i = 0; i < number_of_options; i++){
-        
-        printf("Call\tStrike\tPut\n");
-        printf("%.2f\t%d\t%.2f\n", option_prices[i].call, lowest_strike_price + i, option_prices[i].put);
-        printf("----------------------\n");
+        fprintf(fp, "%.2f,%d,%.2f\n", option_prices[i].call, lowest_strike_price + i, option_prices[i].put);
     }
+    fclose(fp);
+
     pthread_mutex_unlock(&options_mutex);
 
     pthread_exit(0);
@@ -106,129 +122,107 @@ void *thread_calculate_options(void *args){
 
 //Embeds provided python file and runs it, needed for APIs used
 void run_python(char file_name[]){
-    FILE* fp;
 
-    fp = _Py_fopen(file_name, "r");
+    FILE* fp = _Py_fopen(file_name, "r");
     PyRun_SimpleFile(fp, file_name);
-}
-
-//Gets intraday data and aranges it in a queue
-Queue init(){
-    run_python("get_intraday_data.py");
-    Node *head = NULL, *tail = NULL;
-    FILE *fp = fopen("intraday_data.txt", "r");
-    float number;
-    int i = 0;
-
-    while(fscanf(fp, "%f", &number) > 0 && i < number_of_entries)
-    {
-        enqueue(&head, &tail, number);
-        i++;
-    }
-
-    Queue nodes;
-    nodes.head = head;
-    nodes.tail = tail;
-    return nodes;
-}
-
-void get_ticker(){
-    char ticker[10];
-    printf("Enter the ticker:\n");
-    scanf("%s", ticker);
-    FILE *fp = fopen("ticker.txt", "w");
-    fprintf(fp, "%s", ticker);
     fclose(fp);
-    printf("Loading data for %s\n", ticker);
+
+    return;
 }
 
-float get_current_price(){
-    FILE *fp = fopen("current_stock_price.txt", "r");
-    float price;
-    fscanf(fp, "%f", &price);
-    return price;
-}
-
-float calculate_volatility(Node *head){
-    float mean = 0, sum_of_squared_deviations = 0;
-    Node *t;
-
-    if(!head) return -1;
-
-    for(t = head; t != NULL; t = t -> next){
-        mean += (t -> val);
-    }
-
-    mean /= (float) number_of_entries;
+void get_tickers(){
+    //Ticker selection and preparation to send to the Python script
+    printf("How many tickers would you like to follow? ");
+    scanf("%d", &number_of_tickers);
+    char ticker[8];
+    tickers = malloc(number_of_tickers * sizeof(char *));
+    FILE *fp = fopen("tickers.csv", "w");
     
-    for(t = head; t != NULL; t = t -> next){
-        sum_of_squared_deviations += pow(((t -> val) - mean), 2);
+    for(int i = 0; i < number_of_tickers; i++){
+        printf("Enter the ticker:\n");
+        scanf("%s", ticker);
+        fprintf(fp, "%s", ticker);
+        if(i != number_of_tickers - 1) fprintf(fp, "\n");
+
+        //Store tickers
+        tickers[i] = malloc(strlen(ticker) * sizeof(char));
+        strcpy(tickers[i], ticker);
+
+        strcat(ticker, ".csv");
+        FILE *csv = fopen(ticker, "w");
+        fclose(csv);
+    }
+    
+    fclose(fp);
+
+    return;
+}
+
+void get_dates(){
+    //Options usually exipre on fridays but it is left to the user's will to put in their own DTE(days till expiry)
+    printf("For how many dates would you like to calculate options? ");
+    scanf("%d", &number_of_dates);
+    days = malloc(number_of_dates * sizeof(float));
+
+    for(int i = 0; i < number_of_dates; i++){
+        printf("Enter the number of days:\n");
+        scanf("%f", &days[i]);
     }
 
-    float variance = sum_of_squared_deviations / number_of_entries;
-    float standardDeviation = sqrt(variance);
-
-    return standardDeviation;
+    return;
 }
 
 int main(){
     Py_Initialize();
-    get_ticker();
 
-    //Loads historical data from api
-    Queue nodes = init();
+    get_tickers();
+    get_dates();
 
     time_t raw_time;
     time(&raw_time);
-    struct tm *time_info = localtime(&raw_time);
-
-    //Most often used option durations
-    float days[3] = {90, 180, 270};
-    float risk_free_rate, divided_time, current_price = 0, volatility;
+    struct tm *time_info;
+    
+    float risk_free_rate, divided_time, current_price, volatility;
     float *variables;
-
-    printf("Enter the current risk-free rate of interest:\n");
-    scanf("%f", &risk_free_rate);
     
     pthread_mutex_init(&options_mutex, NULL);
 
     do{
-        //CLR
-        system("clear");
-        pthread_t threads[3];
-
-        run_python("get_current_stock_price.py");
-        current_price = get_current_price();
-
-        //FIFO - Removes the last stock price entry and places a fresh one on top
-        dequeue(&nodes.head, &nodes.tail);
-        enqueue(&nodes.head, &nodes.tail, current_price);
-        volatility = calculate_volatility(nodes.head);
-
+        run_python("IV_and_stock_pc.py");
+        time_info = localtime(&raw_time);
+        
+        pthread_t threads[number_of_tickers][number_of_dates];
         clock_t begin = clock();
-        for (int i = 0; i < 3; i++)
-        {
-            //Allocate data to send for further processing, it will be freed when the thread is done fetching variables
-            variables = (float *) malloc(5 * sizeof(float));
+        
+        FILE *fp = fopen("variables.csv", "r");
 
-            variables[0] = current_price;
-            variables[1] = volatility;
-            variables[2] = risk_free_rate;
-            variables[3] = 0; //Strike price not yet determined
-            divided_time = (days[i] / 365);
-            variables[4] = divided_time;
+        fscanf(fp, "%f\n", &risk_free_rate);
 
-            pthread_create(&threads[i], NULL, thread_calculate_options, (void *)variables);
+        for(int i = 0; i < number_of_tickers; i++){
+            //Get data
+            fscanf(fp, "%f,%f\n", &current_price, &volatility);
+
+            for(int j = 0; j < number_of_dates; j++){
+                variables = (float *) malloc(6 * sizeof(float));
+
+                variables[0] = current_price;
+                variables[1] = volatility / 100; //From % to decimal
+                variables[2] = risk_free_rate;
+                variables[3] = 0; //Strike price not yet determined
+                variables[4] = days[j] / 365;
+                variables[5] = i;
+
+                pthread_create(&threads[i][j], NULL, thread_calculate_options, (void *)variables);
+            }
         }
+
+        fclose(fp);
+
         clock_t end = clock();
-
         double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+        printf("\nTimed: %f seconds\n", time_spent);
 
-        //To limit Api requests and match data granularity the program sleeps
-        sleep(1);
-        printf("\nTimed: %f seconds", time_spent);
-        printf("\nCurrent Stock Price: %f\nVolatility: %f\n", current_price, volatility);
-        sleep(4);
+        break;
 
     //Working exchange market hours in local time
     } while( (time_info->tm_wday != 0 && time_info->tm_wday != 6) && 

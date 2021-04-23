@@ -1,4 +1,2 @@
 .vscode
-current_stock_price.txt
-intraday_data.txt
-ticker.txt
+*.csv
