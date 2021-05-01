@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
-#include <python3.8/Python.h>
+#include <Python.h>
 #include <unistd.h>
 #include <pthread.h>
 #include "calculations.h"

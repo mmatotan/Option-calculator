@@ -7,7 +7,7 @@ import datetime
 import pandas
 import csv
 
-option_selector = 0
+option_selector = 1
 
 #Fetch 10y bond rate
 r = np.round(si.get_live_price("^TNX") / 100, 4)

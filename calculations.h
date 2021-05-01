@@ -3,6 +3,7 @@
 
 #include <math.h>
 #define e 2.71828
+#define M_SQRT1_2 0.707107
 
 float calculate_call_option(float stock_price, float risk_free_rate, float time, float Nd1, float Nd2, float strike_price){
     float Vc;
