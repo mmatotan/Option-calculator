@@ -10,7 +10,11 @@ import csv
 option_selector = 0
 
 #Fetch 10y bond rate
-r = np.round(si.get_live_price("^TNX") / 100, 4)
+r = si.get_live_price("^TNX")
+if m.isnan(r):
+    r = 0.01356
+else:
+    r = np.round(r / 100, 4)
 
 tickers = []
 csvFile = open("tickers.csv", "r")
