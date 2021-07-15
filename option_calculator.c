@@ -112,7 +112,7 @@ int main(int argc, char *argv[]){
         omp_set_nested(0);
     }
 
-    printf("\nRunning the program on %d threads.\n", (int)omp_get_max_threads());
+    printf("\nRunning the program on %d thread(s).\n", (int)omp_get_max_threads());
 
     Py_Initialize();
 
@@ -126,11 +126,11 @@ int main(int argc, char *argv[]){
     float risk_free_rate, divided_time, current_price, volatility;
     float current_prices[number_of_tickers], volatilities[number_of_tickers];
     int number_of_strikes[number_of_tickers], lowest_strikes[number_of_tickers], highest_strikes[number_of_tickers], lowest_number = 1000;
-    long long int number_of_calculations = 0;
+    unsigned long long int number_of_calculations = 0;
     option *option_prices[number_of_tickers][number_of_dates];
 
     do{
-        run_python("IV_and_stock_pc.py");
+        //run_python("IV_and_stock_pc.py");
         time_info = localtime(&raw_time);
         
         FILE *fp = fopen("variables.csv", "r");
@@ -148,11 +148,11 @@ int main(int argc, char *argv[]){
             number_of_strikes[i] = highest_strikes[i] - lowest_strikes[i];
             if(number_of_strikes[i] < lowest_number) lowest_number = number_of_strikes[i];
             
-            for (int j = 0; j < number_of_dates; j++)
-            {
-                //Dont forget to free later
-                option_prices[i][j] = malloc(number_of_strikes[i] * sizeof(option));
-            }
+            // for (int j = 0; j < number_of_dates; j++)
+            // {
+            //     //Dont forget to free later
+            //     option_prices[i][j] = malloc(number_of_strikes[i] * sizeof(option));
+            // }
 
             number_of_calculations += (number_of_dates * number_of_strikes[i]);
         }
@@ -162,16 +162,20 @@ int main(int argc, char *argv[]){
         clock_t begin = clock();
 
         //Parralelized loop for calculating and saving options
-        for (int i = 0; i < number_of_tickers; i++)
+        int i, j, k;
+        #pragma omp parallel for schedule(static, 256) private(j, k) collapse(2)
+        for (i = 0; i < number_of_tickers; i++)
         {
-            #pragma omp parallel for schedule(nonmonotonic:auto) collapse(2)
-            for (int j = 0; j < number_of_dates; j++)
+            for (j = 0; j < number_of_dates; j++)
             {
-                for (int k = 0; k < number_of_strikes[i]; k++)
+                option *chain = malloc(number_of_strikes[i] * sizeof(option));
+                for (k = 0; k < number_of_strikes[i]; k++)
                 {
                     //printf("This thread is calculating %s-%d-%d\n", tickers[i], (int)days[j], k + lowest_strikes[i]);
-                    option_prices[i][j][k] = calculate_single_option(current_prices[i], volatilities[i] / 100, risk_free_rate, k + lowest_strikes[i], days[j] / 365);
-                }   
+                    chain[k] = calculate_single_option(current_prices[i], volatilities[i] / 100, risk_free_rate, k + lowest_strikes[i], days[j] / 365);
+                }
+                //option_prices[i][j][k] = calculate_single_option(current_prices[i], volatilities[i] / 100, risk_free_rate, k + lowest_strikes[i], days[j] / 365);
+                option_prices[i][j] = chain;
             }   
         }
 
