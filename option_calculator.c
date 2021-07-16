@@ -61,7 +61,7 @@ void get_tickers(){
     FILE *fp = fopen("tickers.csv", "w");
     
     for(int i = 0; i < number_of_tickers; i++){
-        printf("Enter the ticker:\n");
+        printf("\nEnter the %d. ticker: ", i + 1);
         scanf("%s", ticker);
         fprintf(fp, "%s", ticker);
         if(i != number_of_tickers - 1) fprintf(fp, "\n");
@@ -82,12 +82,12 @@ void get_tickers(){
 
 void get_dates(){
     //Options usually exipre on fridays but it is left to the user's will to put in their own DTE(days till expiry)
-    printf("For how many dates would you like to calculate options? ");
+    printf("\nFor how many dates would you like to calculate options? ");
     scanf("%d", &number_of_dates);
     days = malloc(number_of_dates * sizeof(float));
 
     for(int i = 0; i < number_of_dates; i++){
-        printf("Enter the number of days:\n");
+        printf("\nEnter the %d. DTE: ", i + 1);
         scanf("%f", &days[i]);
     }
 
@@ -96,40 +96,42 @@ void get_dates(){
 
 int main(int argc, char *argv[]){
 
-    printf("Number of processors available: %d", omp_get_num_procs());
+    int max_threads;
 
     //Arguments setup for number of threads
     if(argc == 2){
+        //If running on >1 threads
         if(atoi(argv[1]) != 1){
-            omp_set_num_threads(atoi(argv[1]));
+            max_threads = atoi(argv[1]);
             omp_set_nested(1);        
         } else {
-            omp_set_num_threads(1);
+            max_threads = 1;
             omp_set_nested(0);    
         }
     } else {
-        omp_set_num_threads(1);
+        max_threads = 1;
         omp_set_nested(0);
     }
-
-    printf("\nRunning the program on %d thread(s).\n", (int)omp_get_max_threads());
-
+    
+    //Python embed init, input for tickers and dates
     Py_Initialize();
-
     get_tickers();
     get_dates();
 
+    //Time to check if NYSE is working currently
     time_t raw_time;
     time(&raw_time);
     struct tm *time_info;
     
-    float risk_free_rate, divided_time, current_price, volatility;
-    float current_prices[number_of_tickers], volatilities[number_of_tickers];
-    int number_of_strikes[number_of_tickers], lowest_strikes[number_of_tickers], highest_strikes[number_of_tickers], lowest_number = 1000;
+    float risk_free_rate, current_price, volatility, current_prices[number_of_tickers], volatilities[number_of_tickers];
+    int number_of_strikes[number_of_tickers], lowest_strikes[number_of_tickers], highest_strikes[number_of_tickers], cache_skip;
     unsigned long long int number_of_calculations = 0;
     option *option_prices[number_of_tickers][number_of_dates];
+    double dtime;
 
     do{
+        cache_skip = 5;
+
         //run_python("IV_and_stock_pc.py");
         time_info = localtime(&raw_time);
         
@@ -146,41 +148,52 @@ int main(int argc, char *argv[]){
             if(lowest_strikes[i] < 1) lowest_strikes[i] = 1;
             highest_strikes[i] = (int) floor(current_prices[i] + ((volatilities[i] / 100) * current_prices[i]));
             number_of_strikes[i] = highest_strikes[i] - lowest_strikes[i];
-            if(number_of_strikes[i] < lowest_number) lowest_number = number_of_strikes[i];
             
-            // for (int j = 0; j < number_of_dates; j++)
-            // {
-            //     //Dont forget to free later
-            //     option_prices[i][j] = malloc(number_of_strikes[i] * sizeof(option));
-            // }
-
             number_of_calculations += (number_of_dates * number_of_strikes[i]);
         }
 
         fclose(fp);
 
-        clock_t begin = clock();
+        fp = fopen("results.csv", "w");
 
-        //Parralelized loop for calculating and saving options
-        int i, j, k;
-        #pragma omp parallel for schedule(static, 256) private(j, k) collapse(2)
-        for (i = 0; i < number_of_tickers; i++)
+        for (int threads = 1; threads <= max_threads; threads++)
         {
-            for (j = 0; j < number_of_dates; j++)
+            omp_set_num_threads(threads);
+        
+            dtime = omp_get_wtime();
+
+            int i, j, k;
+            //Parralelized loop for calculating and saving options
+            #pragma omp parallel for private(j, k) schedule(nonmonotonic:dynamic) collapse(2)
+            for (i = 0; i < number_of_tickers; i++)
             {
-                option *chain = malloc(number_of_strikes[i] * sizeof(option));
-                for (k = 0; k < number_of_strikes[i]; k++)
+                for (j = 0; j < number_of_dates; j++)
                 {
-                    //printf("This thread is calculating %s-%d-%d\n", tickers[i], (int)days[j], k + lowest_strikes[i]);
-                    chain[k] = calculate_single_option(current_prices[i], volatilities[i] / 100, risk_free_rate, k + lowest_strikes[i], days[j] / 365);
-                }
-                //option_prices[i][j][k] = calculate_single_option(current_prices[i], volatilities[i] / 100, risk_free_rate, k + lowest_strikes[i], days[j] / 365);
-                option_prices[i][j] = chain;
-            }   
+                    option *chain = malloc(number_of_strikes[i] * sizeof(option));
+                    for (k = 0; k < number_of_strikes[i]; k++)
+                    {
+                        chain[k] = calculate_single_option(current_prices[i], volatilities[i] / 100, risk_free_rate, k + lowest_strikes[i], days[j] / 365);
+                    }
+                    option_prices[i][j] = chain;
+                }   
+            }
+
+            dtime = omp_get_wtime() - dtime;
+
+            //First calculation will always be the slowest since the CPU uses cached values for all next calculations
+            //To keep integrity of data the first calculation is processed but not recorded
+            if(cache_skip > 0 && threads == 1){
+                cache_skip = 0;
+                threads--;
+                continue;
+            }
+
+            fprintf(fp, "%d,%f,%lld\n", threads, dtime, number_of_calculations);
+
+            printf("\nTimed: %f seconds for %lld calculations on %d thread(s)\n", dtime, number_of_calculations, threads);
         }
 
-        clock_t end = clock();
-        double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+        fclose(fp);
         
         //Loops for saving prices in .csv files
         for(int i = 0; i < number_of_tickers; i++){
@@ -205,13 +218,15 @@ int main(int argc, char *argv[]){
             fclose(csv);
         }
 
-        printf("\nTimed: %f seconds for %lld calculations\n", time_spent, number_of_calculations);
-
-        //Delete in final version
+        //For constant updating delete this break
         break;
 
     //NYSE working hours in local time
     } while( (time_info->tm_wday != 0 && time_info->tm_wday != 6) && ( ((time_info->tm_hour >= 15 && time_info->tm_min >= 30) || time_info->tm_hour > 15) && time_info->tm_hour <= 22) );
 
+    run_python("data_visualization.py");
+
     Py_Finalize();
+
+    return 0;
 }
