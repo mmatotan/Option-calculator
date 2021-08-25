@@ -48,15 +48,18 @@ with open('results.csv', 'r') as csvfile:
         if(float(raw_y[i - 1]) > y_maximum):
             y_maximum = float(raw_y[i - 1])
             x_maximum = i
-    
+
+print(f"Minimum na {x_minimum} dretvi/dretve")
+print(f"Maximum: {x_maximum} dretvi/dretve")
 
 plt.plot(x, y, 'kx', label="Zasebno vrijeme izračuna")
 plt.plot(x_minimum, y_minimum, 'ro', label="Najbrže vrijeme")
 plt.plot(x_maximum, y_maximum, 'go', label="Najduže vrijeme")
 
-reg = np.polyfit(x, y, 3)
+stupanj = 2
+reg = np.polyfit(x, y, stupanj)
 f = np.poly1d(reg)
-plt.plot(x, f(x), lw=3, label="Regresijska krivulja 3. stupnja", c='r')
+plt.plot(x, f(x), lw=3, label=f"Regresijska krivulja {stupanj}. stupnja", c='r')
 
 plt.xlabel("Broj dretvi")
 plt.ylabel("Vremena izračuna")

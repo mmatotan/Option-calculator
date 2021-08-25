@@ -78,9 +78,8 @@ for ticker in tickers:
         else:
             high_IV = IV
         IV = (low_IV + high_IV) / 2
+        IV = np.round(IV, 2)
         guess_price = price.call_price(IV / 100)
-
-    IV = np.round(IV, 2)
 
     csvWriter.writerow([stockPrice] + [IV])
 

@@ -123,7 +123,7 @@ int main(int argc, char *argv[]){
     time(&raw_time);
     struct tm *time_info;
     
-    float risk_free_rate, current_price, volatility, current_prices[number_of_tickers], volatilities[number_of_tickers];
+    float risk_free_rate, current_prices[number_of_tickers], volatilities[number_of_tickers];
     int number_of_strikes[number_of_tickers], lowest_strikes[number_of_tickers], highest_strikes[number_of_tickers], cache_skip;
     unsigned long long int number_of_calculations = 0;
     option *option_prices[number_of_tickers][number_of_dates];
@@ -164,7 +164,7 @@ int main(int argc, char *argv[]){
 
             int i, j, k;
             //Parralelized loop for calculating and saving options
-            #pragma omp parallel for private(j, k) schedule(nonmonotonic:dynamic) collapse(2)
+            #pragma omp parallel for private(j, k) schedule(dynamic) collapse(2)
             for (i = 0; i < number_of_tickers; i++)
             {
                 for (j = 0; j < number_of_dates; j++)
