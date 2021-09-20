@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
-#include <python3.8/Python.h>
+#include <python3.9/Python.h>
 #include <unistd.h>
 #include <omp.h>
 #include "calculations.h"
@@ -118,21 +118,24 @@ int main(int argc, char *argv[]){
     get_tickers();
     get_dates();
 
+    int number_of_results;
+    printf("\nEnter the number of result calculations:\n");
+    scanf("%d", &number_of_results);
+
     //Time to check if NYSE is working currently
     time_t raw_time;
     time(&raw_time);
     struct tm *time_info;
     
     float risk_free_rate, current_prices[number_of_tickers], volatilities[number_of_tickers];
-    int number_of_strikes[number_of_tickers], lowest_strikes[number_of_tickers], highest_strikes[number_of_tickers], cache_skip;
+    int number_of_strikes[number_of_tickers], lowest_strikes[number_of_tickers], highest_strikes[number_of_tickers];
     unsigned long long int number_of_calculations = 0;
     option *option_prices[number_of_tickers][number_of_dates];
-    double dtime;
+    double times[max_threads], dtime;
+    memset(times, 0, sizeof times);
 
     do{
-        cache_skip = 5;
-
-        //run_python("IV_and_stock_pc.py");
+        run_python("IV_and_stock_pc.py");
         time_info = localtime(&raw_time);
         
         FILE *fp = fopen("variables.csv", "r");
@@ -156,42 +159,45 @@ int main(int argc, char *argv[]){
 
         fp = fopen("results.csv", "w");
 
+
         for (int threads = 1; threads <= max_threads; threads++)
         {
             omp_set_num_threads(threads);
         
-            dtime = omp_get_wtime();
+	    for (int results = 0; results < number_of_results; results++)
+	    {
 
-            int i, j, k;
-            //Parralelized loop for calculating and saving options
-            #pragma omp parallel for private(j, k) schedule(dynamic) collapse(2)
-            for (i = 0; i < number_of_tickers; i++)
-            {
-                for (j = 0; j < number_of_dates; j++)
-                {
-                    option *chain = malloc(number_of_strikes[i] * sizeof(option));
-                    for (k = 0; k < number_of_strikes[i]; k++)
-                    {
-                        chain[k] = calculate_single_option(current_prices[i], volatilities[i] / 100, risk_free_rate, k + lowest_strikes[i], days[j] / 365);
-                    }
-                    option_prices[i][j] = chain;
-                }   
-            }
+	            dtime = omp_get_wtime();
 
-            dtime = omp_get_wtime() - dtime;
+	            int i, j, k;
+	            //Parralelized loop for calculating and saving options
+	            #pragma omp parallel for private(j, k) schedule(dynamic) collapse(2)
+	            for (i = 0; i < number_of_tickers; i++)
+	            {
+	                for (j = 0; j < number_of_dates; j++)
+	                {
+	                    option *chain = malloc(number_of_strikes[i] * sizeof(option));
+	                    for (k = 0; k < number_of_strikes[i]; k++)
+	                    {
+	                        chain[k] = calculate_single_option(current_prices[i], volatilities[i] / 100, risk_free_rate, k + lowest_strikes[i], days[j] / 365);
+	                    }
+	                    option_prices[i][j] = chain;
+	                }   
+	            }
 
-            //First calculation will always be the slowest since the CPU uses cached values for all next calculations
-            //To keep integrity of data the first calculation is processed but not recorded
-            if(cache_skip > 0 && threads == 1){
-                cache_skip = 0;
-                threads--;
-                continue;
-            }
+	            dtime = omp_get_wtime() - dtime;
 
-            fprintf(fp, "%d,%f,%lld\n", threads, dtime, number_of_calculations);
+		    times[threads - 1] += dtime;
+		}
 
-            printf("\nTimed: %f seconds for %lld calculations on %d thread(s)\n", dtime, number_of_calculations, threads);
         }
+
+	for (int i = 0; i < max_threads; i++){
+		times[i] /= number_of_results;
+                fprintf(fp, "%d,%f,%lld\n", i + 1, times[i], number_of_calculations);
+	}
+
+	
 
         fclose(fp);
         
